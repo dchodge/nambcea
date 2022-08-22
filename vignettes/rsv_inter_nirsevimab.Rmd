@@ -1,0 +1,869 @@
+---
+title: "namb_cea"
+author: "David Hodgson"
+date: "19/08/2022"
+output: html_document
+---
+
+
+# 1. Setup 
+# 1.1 Import libraries
+May need to downoad all of these (use install.packages)
+```{r libraries}
+
+library(Rcpp)       # For c++ intergration
+library(RcppEigen)  # Ditto
+library(coda)       # Ditto
+library(tidyverse)
+library(parallel)
+library(MASS)
+library(foreach)
+library(gridExtra)
+library(doParallel)
+library(BayesianTools)
+library(devtools)
+library(here)
+library(patchwork)
+library(triangle)
+
+```
+
+
+## 2 Import data for the epidemic model intervention model
+### 2.1 RunIntervention class
+
+This section calls a class from the cpp module inteface (RunInterventions.cpp) for the cpp intervention model (defined in RunInterventions.h).
+Then, using demographic data from the UK (ukdata) and model data needed for the intervention programmes (data_inter_uk), the intervention model class is initialised and ready to use! 
+
+```{r}
+
+sourceCpp(here("src", "RunInterventions.cpp")) # Uploads empty RunInterventions class
+source(here("R", "RunInterventionsClass.R")) # Uploads emmake_RunInterventionspty function
+burnin_yrs <- 2
+run_yrs <- 10
+
+# Load pre-made datasets
+load(file = here::here("data", "inter_model_input", "rsv_data_uk.RData")) # loads ukdata
+load(file = here::here("data", "inter_model_input", "inter_data_uk.RData")) # loads data_inter_uk
+
+classRunInterventions <- make_RunInterventions(RunInterventions, ukdata, data_inter_uk, burnin_yrs * 365, run_yrs * 365)
+
+```
+
+# 2.2 Load loads of functions 
+
+Three examples of how to implement your own custom calendars are given below. 
+
+```{r}
+
+source(here("R", "calc_outcomes.R")) # Uploads emmake_RunInterventionspty function
+source(here("R", "vac_cal.R")) # Uploads emmake_RunInterventionspty function
+source(here("R", "run_scripts.R")) # Uploads make_RunInterventions function
+# make_data_list() do not rerun, will create new efficacy values and will consequently have to rerun everything
+
+find_optimal_strategy <- function(trimmed_icer_table, icer_val = 20000) {
+  trimmed_icer_table %>% filter((icer > 0 & icer < icer_val) | is.na(icer)) %>% tail(1) %>% pull(strategy)
+}
+
+recal_icer_table <- function(icer_table, remove_dom = FALSE) {
+  # REMOVE DOM
+  icer_table_lol <- icer_table %>% arrange(total_cost) %>%
+    mutate(incr_QALY = QALY - lag(QALY), incr_cost = total_cost - lag(total_cost)) %>%
+    mutate(icer = incr_cost / incr_QALY, s_p_cea = 20000 * incr_QALY - incr_cost) %>%
+    mutate(dom = incr_QALY < 0) %>% filter(!dom | is.na(dom))
+
+  icer_table_lol <- icer_table_lol %>% arrange(total_cost) %>%
+    mutate(incr_QALY = QALY - lag(QALY), incr_cost = total_cost - lag(total_cost)) %>%
+    mutate(icer = incr_cost / incr_QALY, s_p_cea = 20000 * incr_QALY - incr_cost) %>%
+    mutate(dom = incr_QALY < 0) %>% filter(!dom | is.na(dom))
+
+    icer_table_lol <- icer_table_lol %>% arrange(total_cost) %>%
+    mutate(incr_QALY = QALY - lag(QALY), incr_cost = total_cost - lag(total_cost)) %>%
+    mutate(icer = incr_cost / incr_QALY, s_p_cea = 20000 * incr_QALY - incr_cost) %>%
+    mutate(dom = incr_QALY < 0) %>% filter(!dom | is.na(dom))
+
+  icer_table_lol_2 <- icer_table_lol %>% arrange(total_cost) %>%
+    mutate(incr_QALY = QALY - lag(QALY), incr_cost = total_cost - lag(total_cost)) %>%
+    mutate(icer = incr_cost / incr_QALY, s_p_cea = 20000 * incr_QALY - incr_cost) %>%
+    mutate(lag_icer = lead(icer)) %>% mutate(ext_dom = icer > lag_icer) %>% 
+    filter((!ext_dom | is.na(ext_dom)))
+
+  icer_table_lol_2 <- icer_table_lol %>% arrange(total_cost) %>%
+    mutate(incr_QALY = QALY - lag(QALY), incr_cost = total_cost - lag(total_cost)) %>%
+    mutate(icer = incr_cost / incr_QALY, s_p_cea = 20000 * incr_QALY - incr_cost) %>%
+    mutate(lag_icer = lead(icer)) %>% mutate(ext_dom = icer > lag_icer) %>% 
+    filter((!ext_dom | is.na(ext_dom)))
+  
+  icer_table_lol_2 <- icer_table_lol_2 %>% arrange(total_cost) %>%
+    mutate(incr_QALY = QALY - lag(QALY), incr_cost = total_cost - lag(total_cost)) %>%
+    mutate(icer = incr_cost / incr_QALY, s_p_cea = 20000 * incr_QALY - incr_cost) %>%
+    mutate(lag_icer = lead(icer)) %>% mutate(ext_dom = icer > lag_icer) %>% 
+    filter((!ext_dom | is.na(ext_dom)))
+
+  icer_table_lol_2
+
+}
+
+get_optimal_sample <- function(name, icer) {
+  icer_table_plot <- get_icer_table_template(name, FALSE)
+  empty_list <- list(); j <- 1;
+  for (ppd in 1:100) {
+    cat(ppd, " ")
+    for (i in 1:100) {
+      icer_table_plot_sample <- icer_table_plot %>% filter(sample == i) %>% mutate(total_cost = cost + doses * ppd)
+
+      icer_table_plot_dom <- recal_icer_table(icer_table_plot_sample, TRUE) 
+      best <- find_optimal_strategy(icer_table_plot_dom, icer)
+      empty_list[[j]] <- data.frame(
+        ppd = ppd,
+        sample = i,
+        strategy = best)
+      j <- j + 1
+    }
+  }
+  optimal_base_uncert <- empty_list %>% bind_rows
+}
+
+get_optimal_sample_long <- function(name, icer) {
+  icer_table_plot <- get_icer_table_template(name, FALSE)
+  empty_list <- list(); j <- 1;
+  for (ppd in seq(4000, 4600, 10)) {
+    cat(ppd, " ")
+    for (i in 1:100) {
+      icer_table_plot_sample <- icer_table_plot %>% filter(sample == i) %>% mutate(total_cost = cost + doses * ppd)
+
+      icer_table_plot_dom <- recal_icer_table(icer_table_plot_sample, TRUE) 
+      best <- find_optimal_strategy(icer_table_plot_dom, icer)
+      empty_list[[j]] <- data.frame(
+        ppd = ppd,
+        sample = i,
+        strategy = best)
+      j <- j + 1
+    }
+  }
+  optimal_base_uncert <- empty_list %>% bind_rows
+}
+
+
+```
+
+## 3. Code to run just to get weekly outcomes by age group
+
+```{r}
+
+load(file = here::here("data", "nmab", "data_list.RData")) # data_list, 
+rerun_bool <- TRUE
+# Calcualte ICERs
+run_icer_base(data_list, rerun = rerun_bool)
+run_icer_base_direct(data_list, rerun = rerun_bool)
+
+ind_mabs_2mo <- c(0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+# Sensitivity analysis
+run_icer_mabs_dur(data_list, rerun = rerun_bool)
+run_icer_coverage(data_list, 0.7, rerun = rerun_bool)
+run_icer_admin_year(data_list, ind_mabs_2mo, rerun = rerun_bool)
+run_icer_age_eff(data_list, rerun = rerun_bool)
+
+
+```
+
+# Find optimal programmes for sens analysis
+
+```{r}
+
+
+optimal_base_uncert_long <- get_optimal_sample_long("base", 20000)
+save(optimal_base_uncert_long, file = here::here("outputs", "icer", "base_optimal_uncert_long.RData"))
+
+
+optimal_base_uncert <- get_optimal_sample("base", 20000)
+save(optimal_base_uncert, file = here::here("outputs", "icer", "base_optimal_uncert.RData"))
+
+optimal_2mo_uncert <- get_optimal_sample("2mo", 20000)
+save(optimal_2mo_uncert, file = here::here("outputs", "icer", "optimal_2mo_uncert.RData"))
+
+optimal_lower_icer_uncert <- get_optimal_sample("lower_icer", 15000)
+save(optimal_lower_icer_uncert, file = here::here("outputs", "icer", "optimal_lower_icer_uncert.RData"))
+
+optimal_d_250_uncert <- get_optimal_sample("d_250", 20000)
+save(optimal_d_250_uncert, file = here::here("outputs", "icer", "icer_table_plot_d_250.RData"))
+
+optimal_d_360_uncert <- get_optimal_sample("d_360", 20000)
+save(optimal_d_360_uncert, file = here::here("outputs", "icer", "optimal_d_360_uncert.RData"))
+
+optimal_low_cov_uncert <- get_optimal_sample("low_cov", 20000)
+save(optimal_low_cov_uncert, file = here::here("outputs", "icer", "optimal_low_cov_uncert.RData"))
+
+optimal_age_eff_uncert <- get_optimal_sample("age_eff", 20000)
+save(optimal_age_eff_uncert, file = here::here("outputs", "icer", "optimal_age_eff_uncert.RData"))
+
+
+```
+
+```{r}
+
+add_ann_sea <- function(df, added) {
+  df$cost <- df$cost + c(added, added, added, added, added, 0)
+  df
+}
+
+best <- vector("numeric", length = 95); i <- 1; j <- 1; list_df <- list()
+for (p in 0:300) {
+  i <- 1
+  for (ppd in 5:100) {
+    icer_table_plot <- icer_table_plot_mean %>% add_ann_sea(p * 1000000)
+    icer_table_plot <- icer_table_plot %>% mutate(total_cost = cost + ppd * doses)
+
+    trimmed_icer_table <- recal_icer_table(icer_table_plot, remove_dom = TRUE) 
+    trimmed_icer_table <- recal_icer_table(trimmed_icer_table, remove_dom = TRUE) 
+
+    best[i] <- find_optimal_strategy(trimmed_icer_table); i <- i + 1;
+  }
+  cat(p, "\n")
+  list_df[[j]] <- data.frame(op_strat = best, seasonal_cost = p * 100000, ppd = 5:100)
+  j <- j + 1
+}
+
+df_full_data <- list_df %>% bind_rows
+save(df_full_data, file = here::here("outputs", "nirsevimab", "sample_s_ann.RData"))
+
+```
+
+
+
+
+# 4.1 Calculate the impact of each programme
+
+```{r}
+require(ggdist)
+
+source(here::here("R" ,"fig1.R"))
+
+load(file = here("outputs", "impact", "base", "none.RData")) # output_default_none
+load(file = here("outputs", "impact", "base", "status_quo_base.RData")) # output_default_base
+load(file = here("outputs", "impact", "base", "output_season_vhr_base.RData")) # output_season_vhr_base
+load(file = here("outputs", "impact", "base", "output_season_base.RData")) # output_season_base
+load(file = here("outputs", "impact", "base", "output_yr_base.RData")) # output_yr_base
+load(file = here("outputs", "impact", "base", "output_season_catchup_base.RData")) # output_season_catchup_base
+load(file = here("outputs", "impact", "base", "output_season_catchup_nip_base.RData")) # output_season_catchup_nip_base
+
+load(file = here("outputs", "impact", "base", "none_d.RData")) # output_default_none_d
+load(file = here("outputs", "impact", "base", "status_quo_base_d.RData")) # output_default_base_d
+load(file = here("outputs", "impact", "base", "output_season_vhr_base_d.RData")) # output_season_vhr_base_d
+load(file = here("outputs", "impact", "base", "output_season_base_d.RData")) # output_season_base_d
+load(file = here("outputs", "impact", "base", "output_yr_base_d.RData")) # output_yr_base_d
+load(file = here("outputs", "impact", "base", "output_season_catchup_base_d.RData")) # output_season_catchup_base_d
+load(file = here("outputs", "impact", "base", "output_season_catchup_nip_base_d.RData")) # output_season_catchup_nip_base_d
+
+names_prog <- c("VHR", "S",  "YR", "S-CU", "S-CU-PID")
+
+full_inter_outcomes <- bind_rows(
+  get_change(output_default_none, output_season_vhr_base, names_prog[1]),
+  get_change(output_default_none, output_season_base, names_prog[2]),
+  get_change(output_default_none, output_yr_base, names_prog[3]),
+  get_change(output_default_none, output_season_catchup_base, names_prog[4]),
+  get_change(output_default_none, output_season_catchup_nip_base, names_prog[5])
+) %>% mutate(type = factor(type,names_prog)) %>%
+  filter(outcome != "all_cases") %>%
+  mutate(outcome = factor(outcome, levels = c("symptomatic_cases", "gp_visits", "hospital_cases", "bed_days", "deaths"))) %>%
+  mutate(outcome = case_when(
+    outcome == "symptomatic_cases"~"Symptomatic cases",
+    outcome == "gp_visits"~"GP consultations",
+    outcome == "hospital_cases"~"Hospital cases",
+    outcome == "bed_days"~"Bed days",
+    outcome == "deaths"~"Deaths"
+  )
+  )  %>%
+  mutate(type = factor(type, levels = names_prog))
+
+full_inter_outcomes_age <- bind_rows(
+  get_change_age(output_default_none, output_season_vhr_base, names_prog[1]),
+  get_change_age(output_default_none, output_season_base, names_prog[2]),
+  get_change_age(output_default_none, output_yr_base, names_prog[3]),
+  get_change_age(output_default_none, output_season_catchup_base, names_prog[4]),
+  get_change_age(output_default_none, output_season_catchup_nip_base, names_prog[5])
+) %>% mutate(type = factor(type, names_prog)) %>%
+  filter(outcome != "all_cases") %>%
+  mutate(outcome = factor(outcome, levels = c("symptomatic_cases", "gp_visits", "hospital_cases", "bed_days", "deaths"))) %>%
+  mutate(outcome = case_when(
+    outcome == "symptomatic_cases"~"Symptomatic cases",
+    outcome == "gp_visits"~"GP consultations",
+    outcome == "hospital_cases"~"Hospital cases",
+    outcome == "bed_days"~"Bed days",
+    outcome == "deaths"~"Deaths"
+  )
+  )  %>%
+  mutate(type = factor(type, levels = names_prog))
+
+
+p1A <- full_inter_outcomes %>%
+  ggplot() + 
+    stat_pointinterval(aes(y = outcome, x = inci_averted), , color = "black", point_fill = "white", .width = c(0.95), size = 1,
+      shape = 21, point_color = "black", point_size = 2, point_alpha = 0.8) + 
+    facet_grid(rows = vars(type)) + 
+    labs(x = "Proportion of total cases averted", y = "Healthcare outcome") + theme_bw() + theme(legend.position = "none")
+
+tot_dose <- c(
+  output_season_vhr_base$vac_cal[1:52, 2] %>% sum,
+  output_season_base$vac_cal[1:52, 2] %>% sum,
+  output_yr_base$vac_cal[1:52, 2] %>% sum,
+  output_season_catchup_base$vac_cal[1:52, 2] %>% sum,
+  output_season_catchup_nip_base$vac_cal[1:52, 2] %>% sum
+)
+
+dose_df <- data.frame(type = names_prog, tot_dose = tot_dose)
+
+full_inter_outcomes_doses <- full_inter_outcomes %>% left_join(dose_df, by = "type") %>% 
+  mutate(capd = 1000 * (tot_inci_base - tot_inci_output) / tot_dose) %>% 
+  mutate(type = factor(type, names_prog))
+
+p1B <- full_inter_outcomes_doses %>%
+  ggplot() + 
+    stat_pointinterval(aes(y = outcome, x = capd), color = "black", point_fill = "white", .width = c(0.95), size = 1,
+      shape = 21, point_color = "black", point_size = 2, point_alpha = 0.8) + 
+    facet_grid(rows = vars(type)) + 
+    labs(x = "Number of cases averted per 1000 doses", y = "Healthcare outcome") + theme_bw() + theme(legend.position = "none", 
+    axis.text.y = element_blank(), axis.title.y = element_blank()) 
+
+direct_df <- bind_rows(
+  get_prob_direct_df(output_default_none, output_season_vhr_base, output_default_none_d, output_season_vhr_base_d, names_prog[1]),
+  get_prob_direct_df(output_default_none, output_season_base, output_default_none_d, output_season_base_d, names_prog[2]),
+  get_prob_direct_df(output_default_none, output_yr_base, output_default_none_d, output_yr_base_d, names_prog[3]),
+  get_prob_direct_df(output_default_none, output_season_catchup_base, output_default_none_d, output_season_catchup_base_d, names_prog[4]),
+  get_prob_direct_df(output_default_none, output_season_catchup_nip_base, output_default_none_d, output_season_catchup_nip_base_d, names_prog[5])
+) 
+
+direct_df_summary <- direct_df %>% group_by(outcome, age_group_cat, name) %>%
+  summarise(cases_averted_direct_prop = median(cases_averted_direct_prop, na.rm = TRUE), cases_averted_indirect_prop = median(cases_averted_indirect_prop, na.rm = TRUE)) %>%
+  pivot_longer(c(cases_averted_direct_prop, cases_averted_indirect_prop), names_to = "aversion_type", values_to = "prop")
+
+direct_df_summary_plt <- direct_df_summary %>%
+  mutate(aversion_type = case_when(
+    aversion_type == "cases_averted_direct_prop"~"Direct effects",
+    aversion_type == "cases_averted_indirect_prop"~"Indirect effects")) %>%
+  mutate(outcome = case_when(
+    outcome == "all_cases"~"All cases",
+    outcome == "symptomatic_cases"~"Symptomatic cases",
+    outcome == "gp_visits"~"GP consultations",
+    outcome == "hospital_cases"~"Hospital cases",
+    outcome == "bed_days"~"Bed days",
+    outcome == "deaths"~"Deaths"
+  )) %>% 
+  mutate(outcome = factor(outcome,
+    levels = c("All cases", "Symptomatic cases", "GP consultations", "Hospital cases", "Bed days", "Deaths") )) %>%
+  mutate(age_group_cat = factor(age_group_cat, levels = c("<6 mo", "6-11 mo", "1-4 yrs", "5-64 yrs", "65+ yrs"))) %>%
+  mutate(name = factor(name, levels = names_prog))
+
+p1C <- direct_df_summary_plt %>% mutate(prop = abs(prop)) %>%
+  ggplot() + 
+    geom_col(aes(y = outcome, x = prop, fill = age_group_cat), position = position_dodge2()) + 
+    facet_grid(cols = vars(aversion_type), rows = vars(name)) + 
+    labs(y = "Healthcare outcome", x = "Proportion of total cases averted in each age group", fill = "Age group") + theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90))
+  
+(p1A + p1B) / p1C + plot_annotation(tag_levels = 'A')
+ggsave(file = here::here("outputs", "figs", "fig1.pdf"), height = 13, width = 11)
+
+```
+
+
+
+## Results plotting
+## 4.2 Look at estimating the dominance from these programmes
+
+```{r}
+
+source("R/load_outputs.R")
+source("R/supp_figs.R")
+require(ggpattern)
+
+icer_table_plot_mean <- get_icer_table_template("base")
+
+plot_plane(icer_table_plot_mean, 30) # holds assuming price is at least £30
+icer_table_plot_dom <- create_dominance_df(icer_table_plot_mean) %>% bind_rows
+
+p1 <- icer_table_plot_dom %>% 
+  ggplot() + 
+    geom_tile_pattern(aes(x = rank, y = ppd, fill = strategy, pattern = dom_type), 
+      pattern_spacing = 0.01, 
+      pattern_density = 0.01, 
+      pattern_fill    = 'lightblue', 
+      pattern_colour  = '#002366',
+      pattern_angle   = 45,
+      size = 0.5) +
+    scale_pattern_manual(values = c("crosshatch", "none")) + 
+    scale_color_manual(values = c("black", "darkgray", "white")) + theme_minimal() + 
+    labs(x = "Ranking (cheapest to most expensive)", y = "PPD", pattern = "Dominated?", fill = "Programme") + 
+    guides(pattern = guide_legend(override.aes = list(fill = "white"), order = 2),
+     fill = guide_legend(override.aes = list(pattern = "none", order=1) ))
+ggsave(here::here("outputs", "figs", "supp_dominace_ppd.pdf"))
+
+```
+
+# Optimal scenario for ppd
+
+```{r}
+
+load(file = here("outputs", "impact", "base", "none.RData")) # output_default_none
+load(file = here("outputs", "impact",  "base_sum.RData")) # output_season_vhr_base
+load(file = here::here("outputs", "icer", "base_optimal_uncert.RData"))
+load(file = here::here("outputs", "icer", "optimal_2mo_uncert.RData"))
+load(file = here::here("outputs", "icer", "optimal_lower_icer_uncert.RData"))
+load(file = here::here("outputs", "icer", "icer_table_plot_d_250.RData"))
+load(file = here::here("outputs", "icer", "optimal_d_360_uncert.RData"))
+load(file = here::here("outputs", "icer", "optimal_low_cov_uncert.RData"))
+load(file = here::here("outputs", "icer", "optimal_age_eff_uncert.RData"))
+
+get_optimal_mode <- function(uncert, analysis) {
+  uncert %>% group_by(ppd, strategy) %>% summarise(n = n()) %>% filter(n == max(n)) %>%
+    mutate(analysis = analysis)
+}
+
+optimal_base_uncert_long %>% get_optimal_mode("long")
+
+# change the names
+names_prog <- c("Very high risk", "Seasonal",  "Year round", "Seasonal with catch-up", "Seasonal with NIP integrated catch-up")
+optimal_base_uncert_f1 <- optimal_base_uncert %>% 
+  mutate(strategy = case_when(
+    strategy == "seasonal_and_catchup_nip"~names_prog[5],
+    strategy == "seasonal_and_catchup"~names_prog[4],
+    strategy == "seasonal"~names_prog[2],
+    strategy == "vhr"~names_prog[1],
+    strategy == "year_round"~names_prog[3]
+  ))
+
+# get the names 
+scenarios <- optimal_base_uncert_f1$strategy %>% unique 
+# get the length
+S <- optimal_base_uncert_f1$sample %>% unique %>% length
+# get the proportion of each
+optimal_base_uncert_sum <- optimal_base_uncert_f1 %>% 
+  group_by(ppd, strategy) %>% summarise(prop = n() / S)
+
+# get the most freq occuring programme
+optimal_base_uncert_sum_top <- optimal_base_uncert_sum %>% group_by(ppd) %>% mutate(rank = rank(prop)) %>%
+  filter(rank == max(rank))
+
+# stuff to do with plotting
+to_add <- optimal_base_uncert_sum %>% filter(strategy == "S-CU")
+to_add_2 <- optimal_base_uncert_sum %>% filter(strategy == "VHR")
+optimal_base_uncert_sum_top_2 <- 
+  bind_rows(
+    bind_rows(
+      bind_rows(
+          bind_rows(optimal_base_uncert_sum_top, to_add[13, ]),
+          to_add[33, ]),
+        to_add_2[23, ]
+    )
+  )
+
+p2Ai <- optimal_base_uncert_sum %>% 
+  ggplot() +
+    geom_line(aes(x = ppd, y = prop, colour = strategy), linetype = "dashed", size = 1) + 
+     geom_line(data = optimal_base_uncert_sum_top_2, aes(x = ppd, y = prop, color = strategy), size = 1.5) + 
+    scale_color_manual(values = 
+          c("Seasonal with NIP integrated catch-up" = "orange", 
+           "Seasonal with catch-up" = "blue", 
+           "Seasonal" = "darkgreen", 
+           "Very high risk" = "red",
+           "Year round" = "black"
+        )) + 
+    theme_bw() + 
+    labs(x = "Purchasing price per dose (£)", 
+      y = "Probability that programme \nis optimal*", color = "Programme") + 
+    theme(legend.position = "none")
+
+optimal_base_uncert_long %>% get_optimal_mode("long")
+names_prog_long <- c("Very high risk", "Palivizumab")
+optimal_base_uncert_f1_long <- optimal_base_uncert_long %>% 
+  mutate(strategy = case_when(
+    strategy == "pal"~names_prog_long[2],
+    strategy == "vhr"~names_prog_long[1]
+  ))
+S <- optimal_base_uncert_f1_long$sample %>% unique %>% length
+# get the proportion of each
+optimal_base_uncert_sum_long <- optimal_base_uncert_f1_long %>% 
+  group_by(ppd, strategy) %>% summarise(prop = n() / S)
+# get the most freq occuring programme
+optimal_base_uncert_sum_top_long <- optimal_base_uncert_sum_long %>% group_by(ppd) %>% mutate(rank = rank(prop)) %>%
+  filter(rank == max(rank))
+
+p2Aii <- optimal_base_uncert_sum_long %>% 
+  ggplot() +
+    geom_line(aes(x = ppd, y = prop, colour = strategy), linetype = "dashed", size = 1) + 
+     geom_line(data = optimal_base_uncert_sum_top_long, aes(x = ppd, y = prop, color = strategy), size = 1.5) + 
+    scale_color_manual(values = 
+          c(
+           "Seasonal with catch-up" = "blue", 
+           "Seasonal" = "darkgreen", 
+           "Very high risk" = "red",
+           "Palivizumab" = "black"
+        ))+ 
+    theme_bw() + 
+    labs(x = "Purchasing price per dose (£)", 
+      y = "Probability that programme \nis optimal*", color = "Programme") + 
+    theme(axis.text.y = element_blank(), axis.title.y = element_blank())
+
+p2A <- p2Ai + p2Aii + plot_layout(widths = c(2, 1))
+
+icer_table_plot_all <- bind_rows(
+  get_optimal_mode(optimal_base_uncert, "base"),
+  get_optimal_mode(optimal_2mo_uncert, "2mo"),
+  get_optimal_mode(optimal_lower_icer_uncert, "lower_icer"),
+  get_optimal_mode(optimal_d_250_uncert, "d_250"),
+  get_optimal_mode(optimal_d_360_uncert, "d_360"),
+  get_optimal_mode(optimal_low_cov_uncert, "low_cov"),
+  get_optimal_mode(optimal_age_eff_uncert, "age_eff")
+)
+
+levels <- c("Base case*", "Duration of immunity 250 days", "Duration of immunity 360 days",
+        "Age at vaccination at 2 months", "70% coverage", "ICER threshold at 15000£/QALY" , "Age-dependent effiacy")
+icer_table_plot_all_f1 <- icer_table_plot_all %>% mutate(analysis = case_when(   
+    analysis == "base"~"Base case*",
+    analysis == "d_250"~"Duration of immunity 250 days",
+    analysis == "d_360"~"Duration of immunity 360 days",
+    analysis == "2mo"~"Age at vaccination at 2 months",
+    analysis == "low_cov"~"70% coverage",
+    analysis == "lower_icer"~"ICER threshold at 15000£/QALY",
+    analysis == "age_eff"~"Age-dependent effiacy"
+    )) %>% 
+    mutate(analysis = factor(analysis, 
+      levels = levels))
+
+icer_table_plot_all_f2 <- icer_table_plot_all_f1 %>% 
+  mutate(strategy = case_when(
+    strategy == "seasonal_and_catchup_nip"~names_prog[5],
+    strategy == "seasonal_and_catchup"~names_prog[4],
+    strategy == "seasonal"~names_prog[2],
+    strategy == "vhr"~names_prog[1],
+    strategy == "year_round"~names_prog[3]
+  ))
+scenarios <- icer_table_plot_all_f2$strategy
+
+p2B <- icer_table_plot_all_f2 %>% 
+  ggplot() + 
+    geom_tile(aes(x = ppd, y =  forcats::fct_rev(analysis), fill = strategy), alpha = 0.7, color = "black") + 
+    scale_fill_manual(values = 
+      c(
+        "Seasonal with catch-up" = "blue", 
+        "Seasonal" = "darkgreen", 
+        "Very high risk" = "red",
+        "Year round" = "orange"
+        ), 
+      breaks = scenarios,
+      labels = scenarios) + 
+    theme_bw() + labs(x = "Purchasing price per dose (£)", 
+      y = "Sensitivity parameter", fill = "Programme")
+
+p2A / p2B + plot_layout(guides = "collect") + plot_annotation(tag_levels = "A")
+ggsave(file = here::here("outputs", "figs", "fig2.pdf"), height = 8, width = 12)
+
+```
+
+
+
+```{r}
+
+require(scales)
+
+
+load(file = here::here("outputs", "sample_s_ann.RData")) #df_full_data
+
+df_full_data %>% 
+  ggplot() + 
+    geom_tile(aes(x = ppd, y = seasonal_cost, fill = op_strat)) + 
+     labs(x = "Purchasing price per dose (£)", y = "Annual seasonal-specific implementation cost (£)", 
+      fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma)
+
+# 5-33: seasonal_and_catchup
+# 34-63: seasonal
+# 64-100: vhr
+
+# Do some manual work here
+df_full_data_unique <- df_full_data %>% unique
+
+data_list_grad <- list(); i <- 1;
+for(ppd_val in 64:100) {
+  data_list_grad[[i]] <- df_full_data_unique %>% filter(op_strat == "year_round", ppd == ppd_val) %>%
+    group_by(ppd) %>% filter(seasonal_cost == min(seasonal_cost))
+  i <- i + 1
+}
+data_df_grad <- data_list_grad %>% bind_rows()
+
+lmA <- lm(seasonal_cost ~ ppd, data = data_df_grad)
+lmA$coeff
+
+df_full_data_unique <- df_full_data %>% unique
+
+df_full_data_reg_plot_A <- data.frame(ppd = seq(5, 100, 0.1)) %>% 
+  mutate(year_round_boundary = 
+    case_when(
+      (ppd >= 5 & ppd <= 33) ~  20886.7 * ppd + 1282463.1,
+      (ppd >= 33 & ppd <= 63) ~  313059 * ppd +  -8170026,
+      (ppd >= 63 & ppd <= 100) ~  524033.6  * ppd + -21343865.5
+    ),
+    op_strat_new = case_when(
+       (ppd >= 5 & ppd <= 33) ~ "Seasonal with catch-up",
+      (ppd >= 33 & ppd <= 63) ~ "Seasonal",
+       (ppd >= 63 & ppd <= 100) ~ "Very high risk"
+    ),
+    , ymin = 0
+  )
+
+df_full_data_reg_plot_B <- data.frame(ppd = seq(5, 100, 0.1)) %>% 
+  mutate(year_round_boundary = 
+    case_when(
+      (ppd >= 5 & ppd <= 33) ~  20886.7 * ppd + 1282463.1,
+      (ppd >= 33 & ppd <= 63) ~  313059 * ppd +  -8170026 ,
+      (ppd >= 63 & ppd <= 100) ~  524033.6  * ppd + -21343865.5
+    ), ymax = 33000000
+  ) %>% mutate(op_strat_new = c("Year round"))
+
+df_full_data_reg_plot <- bind_rows(df_full_data_reg_plot_A, df_full_data_reg_plot_B) %>%
+  mutate(op_strat_new = factor(op_strat_new, levels = c("Very high risk", "Seasonal", 
+    "Seasonal with catch-up", "Year round")))
+
+p1 <- df_full_data_reg_plot %>% 
+  ggplot() + 
+    geom_ribbon(aes(x = ppd, ymin = ymin, ymax = year_round_boundary, fill = op_strat_new)) + 
+    geom_ribbon(aes(x = ppd, ymin = year_round_boundary, ymax = ymax, fill = op_strat_new)) + 
+      labs(x = "Purchasing price per dose (£)", y = "Annual cost of seasonal administration (£)", 
+      fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma) +
+      geom_rect(xmin = 5, xmax = 33, ymin = 0, ymax = 3e6, linetype = "dashed", color = "black", alpha = 0.001) + 
+      scale_fill_manual(values = c("red", "orange", "blue", "darkgreen"))
+
+df_full_data_reg_plot_trim <- df_full_data_reg_plot %>% filter(ppd <= 33, year_round_boundary < 3e6) %>% 
+  mutate(ymax = 3e6)
+
+p2 <- df_full_data_reg_plot_trim  %>% 
+  ggplot() + 
+    geom_ribbon(aes(x = ppd, ymin = ymin, ymax = year_round_boundary, fill = op_strat_new)) + 
+    geom_ribbon(aes(x = ppd, ymin = year_round_boundary, ymax = ymax, fill = op_strat_new)) + 
+          geom_rect(xmin = 5, xmax = 33, ymin = 0, ymax = 3e6, linetype = "dashed", color = "black", alpha = 0.001) + 
+      labs(x = "Purchasing price per dose (£)", y = "Annual cost of seasonal administration (£)", 
+      fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma) +
+      scale_fill_manual(values = c("red", "darkgreen")) + theme(legend.position = "none")
+
+p1 / p2 + plot_layout(guides = "collect", heights = c(2, 1)) 
+ggsave(file = here::here("outputs", "figs", "fig3.pdf"))
+
+```
+
+
+### info for manuscript
+
+
+
+```{r}
+
+# 10.1% (95% CrI 7.5–12.5), 10.7% (95% CrI 7.9–13.2), and 10.5% (95% CrI 7.8–13.0) of 
+
+full_inter_outcomes %>% filter(outcome == "Hospital cases", type %in% c("YR", "S-CU", "S-CU-PID")) %>%
+  mutate(cases_averted_abs = tot_inci_output - tot_inci_base) %>% 
+  group_by(type) %>% summarise(cases_averted_abs_mean = mean(cases_averted_abs), 
+    lci = quantile(cases_averted_abs, probs = 0.025), 
+    uci = quantile(cases_averted_abs, probs = 0.975))
+
+full_inter_outcomes_age %>% filter(age_group <= 12) %>% 
+  group_by( outcome, seed, type) %>% summarise(tot_inci_base = sum(tot_inci_base), tot_inci_output = sum(tot_inci_output)) %>%
+  mutate(prop_averted = 1 - tot_inci_output / tot_inci_base) %>% 
+  filter(outcome == "Hospital cases", type %in% c("Year round", "Seasonal with catch-up", "Seasonal with NIP integrated catch-up")) %>%
+  group_by(type) %>% summarise(mean_inci_averted = mean(prop_averted), 
+    lci = quantile(prop_averted, probs = 0.025), 
+    uci = quantile(prop_averted, probs = 0.975))
+
+
+full_inter_outcomes_doses %>% filter(outcome %in% c("Symptomatic cases", "Hospital cases"),
+  type == "S") %>% group_by(outcome) %>% summarise(mean_inci_averted = mean(capd), 
+    lci = quantile(capd, probs = 0.025), 
+    uci = quantile(capd, probs = 0.975))
+
+full_inter_outcomes_doses %>% filter(outcome == "Hospital cases", type %in% c("YR", "S-CU", "S-CU-PID")) %>% group_by(type) %>%
+  summarise(mean_inci_averted = mean(capd), 
+    lci = quantile(capd, probs = 0.025), 
+    uci = quantile(capd, probs = 0.975))
+
+``` 
+
+```{r}
+
+get_incr_cost <- function(none, output_s, output_y) {
+
+  mean_QALY_none <- none$QALY %>% filter(type == "discounted", metric == "total") %>% unique %>% pull(value) 
+  mean_cost_treat_none <- none$cost %>% filter(type == "discounted", metric == "total") %>% unique %>% pull(value) 
+
+  mean_QALY_s <- output_s$QALY %>% filter(type == "discounted", metric == "total") %>% unique %>% pull(value) 
+  mean_cost_treat_s <- output_s$cost %>% filter(type == "discounted", metric == "total") %>% unique %>% pull(value) 
+  doses_s <- (output_s$vac_cal[, 2] * exp(-(1:521 - 1) * 0.035 / 52.0)) %>% sum # number of doses of mabs given
+
+  mean_QALY_y <- output_y$QALY %>% filter(type == "discounted", metric == "total") %>% unique %>% pull(value) 
+  mean_cost_treat_y <- output_y$cost %>% filter(type == "discounted", metric == "total") %>% unique %>% pull(value) 
+  doses_y <- (output_y$vac_cal[, 2] * exp(-(1:521 - 1) * 0.035 / 52.0)) %>% sum # number of doses of mabs given
+
+  data.frame(
+    QALY_base = mean_QALY_none,
+    QALY_change_s = mean_QALY_none - mean_QALY_s,
+    QALY_change_y = mean_QALY_none - mean_QALY_y,
+    QALY_change_y_incr = mean_QALY_s - mean_QALY_y,
+    cost_base = mean_cost_treat_none,
+    cost_change_s = mean_cost_treat_s - mean_cost_treat_none,
+    cost_change_y = mean_cost_treat_y - mean_cost_treat_none,
+    cost_change_y_incr = mean_cost_treat_y - mean_cost_treat_s,
+    doses_s = doses_s,
+    doses_y = doses_y,
+    doses_y_incr = doses_y - doses_s
+  )
+}
+
+
+-67180085 + 20 * 2134817
+-71842788 + 20 * 5251676
+icer_table_sample <- get_incr_cost(output_default_none, output, output_yr_base)
+
+p <- 1e8
+ppd <- 30
+icer_table_sample$QALY_change_s * (icer_table_sample$cost_change_y_incr + ppd * icer_table_sample$doses_y_incr) / icer_table_sample$QALY_change_y_incr - (icer_table_sample$cost_change_s + ppd * icer_table_sample$doses_s)
+
+QALY_change_s * (cost_change_y_incr + ppd * doses_y_incr) / QALY_change_y_incr - (cost_change_s + ppd * doses_s)
+
+
+get_df_wtp <- function(output, string_name) {
+  icer_table_sample <- get_incr_cost(output_default_none, output, output_yr_base)
+  j <- 1
+  df_list_wtp <- list()
+  for (ppd in 1:100) {
+    df_list_wtp[[j]] <- icer_table_sample %>%
+      mutate(wtp_nd = (cost_change_y + doses_y * ppd) - (cost_change_s + doses_s * ppd)) %>%
+      mutate(wtp_ce = QALY_change_s * (cost_change_y_incr + ppd * doses_y_incr) / QALY_change_y_incr - (cost_change_s + ppd * doses_s),
+        ppd = ppd,
+        programme = string_name) %>%
+      dplyr::select(ppd, programme, wtp_nd, wtp_ce)
+    j <- j + 1
+  }
+  df_wtp <- df_list_wtp %>% bind_rows
+}
+
+
+df_wtp_s <- get_df_wtp(output_season_base, "Season")
+df_wtp_s_cu <- get_df_wtp(output_season_catchup_base, "Season catch-up")
+df_wtp_s_cu_pid <- get_df_wtp(output_season_catchup_nip_base, "Season catch-up PID")
+df_wtp <- bind_rows(bind_rows(df_wtp_s, df_wtp_s_cu), df_wtp_s_cu_pid)
+df_wtp_summ <- df_wtp %>% pivot_longer(c(wtp_nd, wtp_ce), names_to = "type", values_to = "cost") %>% 
+  group_by(ppd, programme, type) %>% summarise(cost_mean = mean(cost))
+
+df_wtp_summ %>% 
+  ggplot() + 
+    geom_line(aes(x = ppd, y = cost_mean / 10, color = programme, linetype = type) ) + 
+    theme_bw() + labs(x = "Price per dose (£)", y = "Threshold seasonal implementation costs")
+    
+```
+
+## Fitting distributions
+```{r}
+
+library(tidyverse)
+fitdist_ci <- function(pars, data, dist) {
+    qs <- c(0.025, 0.5, 0.975); 1:3 %>% map_dbl(~ (dist(qs[.x],  pars[1], pars[2]) - data[.x])^2) %>% sum
+}
+
+fitdist_ci_g <- function(pars, data, dist) {
+    qs <- c(0.025, 0.5, 0.975); 1:3 %>% map_dbl(~ (dist(p = qs[.x], loc = pars[1], scale = pars[2]) - data[.x])^2) %>% sum
+}
+
+
+require(evd)
+eff_symp <- c(0.496, 0.745, 0.871)
+eff_hosp <- c(-0.086, 0.621, 0.868)
+
+par_fit_lnorm <- optim(c(10, 10), fitdist_ci, data = eff_symp, dist = qlnorm, method = "CG")
+par_fit_weibull <- optim(c(10, 10), fitdist_ci, data = eff_symp, dist = qweibull, method = "CG") # best fit
+par_fit_gamma <- optim(c(10, 10), fitdist_ci, data = eff_hosp, dist = qgamma, method = "CG")
+
+par_fit_beta <- optim(c(10, 10), fitdist_ci, data = eff_symp, dist = qbeta, method = "CG")
+hist(rbeta(1000,   12.453878,  6.942577) )
+
+par_fit_gumbel <- optim(c(0, 10), fitdist_ci_g, data = eff_hosp, dist = qgumbel)
+hist(rgamma(1000,   5.940192, 12.905101) )
+
+
+```
+
+
+```{r}
+
+mean_qi_func <- function(vector_vals) {
+  c(mean(vector_vals), quantile(vector_vals, c(0.025, 0.975)))
+}
+
+risk_lr <- matrix(0, 25, 3)
+N <- 10000
+# 0-11 months
+risk_lr[1, ] <- (rlnorm(N, -3.115625, 0.020926) * 0.92 + rlnorm(N, -2.828635, 0.020926) * 0.08) %>% mean_qi_func
+risk_lr[2, ] <- (rweibull(N, 62.227553, 0.094955) * 0.92 +  rweibull(1, 62.227553, 0.126519) * 0.08) %>% mean_qi_func
+risk_lr[3, ] <- (rlnorm(N, -2.639371, 0.021130) * 0.92 + rlnorm(1, -2.352380, 0.021130) * 0.08 ) %>% mean_qi_func
+risk_lr[4, ] <- (rlnorm(N, -2.956136, 0.027445) * 0.92 + rlnorm(1, -2.669146, 0.027445) * 0.08) %>% mean_qi_func
+risk_lr[5, ] <- (rlnorm(N, -3.103970, 0.034059) * 0.92 + rlnorm(1, -2.816981, 0.034059) * 0.08) %>% mean_qi_func
+risk_lr[6, ] <- (rlnorm(N, -3.300267, 0.033973) * 0.92 + rlnorm(1, -3.013278, 0.033973) * 0.08) %>% mean_qi_func
+risk_lr[7, ] <- (rlnorm(N, -3.501204, 0.040090) * 0.92 + rlnorm(1, -3.214214, 0.040090) * 0.08) %>% mean_qi_func
+risk_lr[8, ] <- (rlnorm(N, -3.683768, 0.039078) * 0.92 + rlnorm(1, -3.396781, 0.039078) * 0.08) %>% mean_qi_func
+risk_lr[9, ] <- (rlnorm(N, -3.874510, 0.051394) * 0.92 + rlnorm(1, -3.587518, 0.051394) * 0.08) %>% mean_qi_func 
+risk_lr[10, ] <- (rlnorm(N, -4.018271, 0.058688) * 0.92 + rlnorm(1, -3.731282, 0.058688) * 0.08) %>% mean_qi_func
+risk_lr[11, ] <- (rlnorm(N, -4.274218, 0.056815) * 0.92 + rlnorm(1, -3.987226, 0.056815) * 0.08) %>% mean_qi_func
+risk_lr[12, ] <- (rlnorm(N, -4.405675, 0.090839) * 0.92 + rlnorm(1, -4.118684, 0.090839) * 0.08) %>% mean_qi_func
+# 1 - 4 years
+risk_lr[13, ] <- rlnorm(N, -5.332327, 0.097721) %>% mean_qi_func
+risk_lr[14, ] <- rlnorm(N, -5.102881, 0.097721) %>% mean_qi_func
+risk_lr[15, ] <- rlnorm(N, -5.000518, 0.097721) %>% mean_qi_func
+risk_lr[16, ] <- rlnorm(N, -4.935537, 0.097721) %>% mean_qi_func
+
+for (a in 17:21) # 5-44 years
+    risk_lr[a, ] <- rgamma(N, 60.924023, scale = 0.000001) %>% mean_qi_func
+
+# 45-64 years
+risk_lr[22, ] <- rweibull(N, 10.009425, 0.000849) %>% mean_qi_func
+risk_lr[23, ] <- rweibull(N, 10.009425, 0.001267) %>% mean_qi_func
+# 65 + years
+risk_lr[24, ] <- rgamma(N, 55.761551, scale = 0.000075) %>% mean_qi_func
+risk_lr[25, ] <- rgamma(N, 56.300550, scale = 0.000270) %>% mean_qi_func
+
+colnames(risk_lr) <- c("mean", "lower_95CI", "upper_95CI")
+rownames(risk_lr) <- c("<1mo", "1mo", "2mo", "3mo", "4mo", "5mo", "6mo", "7mo", "8mo", "9mo", "10mo", "11mo",
+  "1yr", "2yr", "3yr", "4yr", "5-9yr", "10-14yr", "15-24yr", "25-34yr", "35-44yr", "45-54yr", "55-64yr", "65-74yr", "75yr+")
+
+write.csv(risk_lr, file = "~/Desktop/rsv_per_inf_hosp.csv")
+
+# 0–11 months
+risk_hr[1] <- rlnorm(1, -2.828635, 0.020926)
+risk_hr[2] <- rweibull(1, 62.227553, 0.126519)
+risk_hr[3] <- rlnorm(1, -2.352380, 0.021130)
+risk_hr[4] <- rlnorm(1, -2.669146, 0.027445)
+risk_hr[5] <- rlnorm(1, -2.816981, 0.034059)
+risk_hr[6] <- rlnorm(1, -3.013278, 0.033973)
+risk_hr[7] <- rlnorm(1, -3.214214, 0.040090)
+risk_hr[8] <- rlnorm(1, -3.396781, 0.039078)
+risk_hr[9] <- rlnorm(1, -3.587518, 0.051394)
+risk_hr[10] <- rlnorm(1, -3.731282, 0.058688)
+risk_hr[11] <- rlnorm(1, -3.987226, 0.056815)
+risk_hr[12] <- rlnorm(1, -4.118684, 0.090839)
+
+```
+
+
+```{r}
+
+df_qaly <- data.frame(
+  age_group = c("<5 years", ">= 5 years", "<5 years", ">= 5 years"),
+  severity = c("Symptomatic", "Symptomatic", "Hospitalised", "Hospitalised"),
+  mean_vals = c(2.336*10^(-3), 1.448*10^(-3),  4.098*10^(-3),  2.990*10^(-3)),
+  lci = c(0.269*10^(-3), 0.135*10^(-3), 0.624*10^(-3),  0.346*10^(-3)),
+  uci = c(9.225*10^(-3), 5.928*10^(-3), 13.141*10^(-3),  11.387*10^(-3))
+)
+
+df_qaly %>% 
+  ggplot() +
+      geom_linerange(aes(y = severity, xmin = lci, xmax =  uci, color = age_group), size = 3,  position = position_dodge(0.5)) + 
+    geom_point(aes(y = severity, x = mean_vals, fill = age_group), size = 8, color = "black", shape = 21, stroke = 2, position = position_dodge(0.5)) +
+    theme_minimal() + labs(x = "QALY loss per episode", y = "Severity", color = "Age group", fill = "Age group") + 
+    theme(text = element_text(size = 20))
+
+```
