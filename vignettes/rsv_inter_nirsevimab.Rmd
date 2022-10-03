@@ -642,7 +642,7 @@ p2 <- df_full_data_reg_plot_trim  %>%
           geom_rect(xmin = 5, xmax = 33, ymin = 0, ymax = 3e6, linetype = "dashed", color = "black", alpha = 0.001) + 
       labs(x = "Purchasing price per dose (£)", y = "Annual cost of seasonal administration (£)", 
       fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma) +
-      scale_fill_manual(values = c("red", "darkgreen")) + theme(legend.position = "none")
+      scale_fill_manual(values = c("blue", "darkgreen")) + theme(legend.position = "none")
 
 p1 / p2 + plot_layout(guides = "collect", heights = c(2, 1)) 
 ggsave(file = here::here("outputs", "figs", "fig3.pdf"))
