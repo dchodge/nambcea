@@ -80,7 +80,7 @@ create_dominance_df_long <- function(icer_table_plot) {
 
   df_dominance_ppd <- list()
   i <- 1
-  for (ppd in 1:100) {
+  for (ppd in seq(4000, 4600, 10)) {
     icer_table_cal <- icer_table_plot %>% mutate(total_cost = cost + doses * ppd)
     icer_table_cal_dom1 <- icer_table_cal %>% arrange(total_cost) %>%
       mutate(dom = QALY < lag(QALY), rank = 1:6, ppd = ppd) 
