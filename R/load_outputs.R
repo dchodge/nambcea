@@ -45,6 +45,8 @@ get_icer_table_template <- function(run_type = "base", mean = TRUE) {
   load(file = here("outputs",  "impact", "base", "none.RData")) # output_default_none
   if (run_type == "base") {
     load(file = here("outputs",  "impact",  "base_sum.RData")) # output_season_vhr_base
+  } else if (run_type == "d_100") {
+    load(file = here("outputs",  "impact",  "d_100_sum.RData")) # output_season_vhr_base
   } else if (run_type == "d_250") {
     load(file = here("outputs",  "impact",  "d_250_sum.RData")) # output_season_vhr_base
   } else if (run_type == "d_360") {
@@ -58,7 +60,7 @@ get_icer_table_template <- function(run_type = "base", mean = TRUE) {
   } else if (run_type == "age_eff") {
     load(file = here("outputs",  "impact",  "age_eff_sum.RData")) # output_season_vhr_base
   } else {
-    cat("Select one of base, d_250, d_360, low_cov, lower_icer, 2mo")
+    cat("Select one of base, d_100, d_250, d_360, low_cov, lower_icer, 2mo")
   }
   if(mean) {
     icer_table_plot <- map2(list_outputs, names(list_outputs), ~get_cea_plane_info_mean(output_default_none, .x, .y)) %>% bind_rows

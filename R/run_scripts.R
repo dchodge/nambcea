@@ -14,7 +14,7 @@ make_data_list <- function() {
 
   require(triangle)
 
-  pal_eff <- rweibull(1250, 12.4311, 0.772251) 
+  pal_eff <- rweibull(1250, 12.4311, 0.772251)
   mab_eff <- rtriangle(1250, 0.496, 0.871, 0.745) # efficacy of long-acting mabs
   mab_0_3_eff <- rtriangle(1250, 0.03, 0.828, 0.588) # efficacy of long-acting mabs
   mab_3p_eff <- rtriangle(1250, 0.696, 0.988, 0.922) # efficacy of long-acting mabs
@@ -204,6 +204,33 @@ run_icer_mabs_dur <- function(datalist, rerun = FALSE) {
   load(file = here("outputs",  "impact", "base", "status_quo_base.RData")) # output_default_base
 
   if (rerun) {
+
+    seeds <- datalist$seeds
+    post <- datalist$post
+    S <- datalist$S
+
+    vac_par_info_d_100 <- list(om_mab = 1 / 100, direct = FALSE, xi_boost = 1)
+
+    output_season_vhr_d_100 <- run_sample_custom(seeds[1:S], datalist$vhr_seasonal, vac_par_info_d_100, 0, post)
+    output_season_d_100 <- run_sample_custom(seeds[1:S], datalist$seasonal, vac_par_info_d_100, 0, post)
+    output_yr_d_100 <- run_sample_custom(seeds[1:S], datalist$year_round, vac_par_info_d_100, 0, post)
+    output_season_catchup_d_100 <- run_sample_custom(seeds[1:S], datalist$seasonal_catchup, vac_par_info_d_100, 0, post)
+    output_season_catchup_nip_d_100 <- run_sample_custom(seeds[1:S], datalist$seasonal_catchup_nip, vac_par_info_d_100, 0, post)
+
+    save(output_season_vhr_d_100, file = here("outputs",  "impact", "mabs_dur", "output_season_vhr_d_100.RData"))
+    save(output_season_d_100, file = here("outputs",  "impact", "mabs_dur", "output_season_d_100.RData"))
+    save(output_yr_d_100, file = here("outputs",  "impact", "mabs_dur", "output_yr_d_100.RData"))
+    save(output_season_catchup_d_100, file = here("outputs",  "impact", "mabs_dur", "output_season_catchup_d_100.RData"))
+    save(output_season_catchup_nip_d_100, file = here("outputs",  "impact", "mabs_dur", "output_season_catchup_nip_d_100.RData"))
+
+    list_outputs <- list(output_default_base, output_season_vhr_d_100, output_season_d_100,
+    output_season_catchup_d_100, output_season_catchup_nip_d_100, output_yr_d_100)
+    list_names <- list("pal", "vhr", "seasonal",
+      "seasonal_and_catchup", "seasonal_and_catchup_nip", "year_round")
+    names(list_outputs) <- list_names
+    save(list_outputs, file = here::here("outputs",  "impact", paste0("d_100", "_sum.RData")))
+
+
     seeds <- datalist$seeds
     post <- datalist$post
     S <- datalist$S

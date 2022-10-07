@@ -1,6 +1,5 @@
 require(dplyr)
 require(tidyr)
-
 require(ggplot2)
 
 labels_month <- c("Jul", "Sep", "Nov", "Jan", "Mar", "May")
@@ -11,6 +10,13 @@ ggplot() +
   theme_bw() + theme(axis.text.y = element_blank(), text = element_text(size = 15)) +
   labs(y = "Transmission Rate")
 
+dexp_standard <- function(x, rate) dexp(x, rate) / rate
+ggplot() +  
+  scale_x_continuous(limits = c(0, 365)) + 
+  scale_y_continuous(limits = c(0, 1)) +
+  geom_function(fun = "dexp_standard", args = list(rate = 1 / 150), size = 3) + 
+  theme_bw() + theme( text = element_text(size = 15)) +
+  labs(x = "Time", y = "Proportion of infants with protection from Nmab")
 
 # Load pre-made datasets
 load(file = here::here("data", "inter_model_input", "rsv_data_uk.RData")) # loads ukdata
@@ -48,6 +54,29 @@ plot_plane <- function(icer_table_plot, ppd) {
 
 
 create_dominance_df <- function(icer_table_plot) {
+
+  df_dominance_ppd <- list()
+  i <- 1
+  for (ppd in 1:100) {
+    icer_table_cal <- icer_table_plot %>% mutate(total_cost = cost + doses * ppd)
+    icer_table_cal_dom1 <- icer_table_cal %>% arrange(total_cost) %>%
+      mutate(dom = QALY < lag(QALY), rank = 1:6, ppd = ppd) 
+
+    icer_table_cal_dom2 <- icer_table_cal_dom1 %>% mutate(QALY_change = QALY - lag(QALY),
+      cost_change = total_cost - lag(total_cost), icer = cost_change / QALY_change) %>%
+      mutate(ext_dom = (icer > lead(icer)) & (lead(icer) > 0) ) 
+
+    icer_table_cal_dom <- left_join(icer_table_cal_dom1, icer_table_cal_dom2, 
+      by = c("strategy", "QALY", "cost", "doses", "total_cost", "dom", "rank", "ppd")) %>%
+      mutate(dom_type = case_when(dom~"Dominated", ext_dom~"Extended dominated", TRUE~"None"))
+
+    df_dominance_ppd[[i]] <- icer_table_cal_dom %>% dplyr::select(strategy, QALY, cost, doses, total_cost, rank, ppd, dom_type)     
+    i <- i + 1
+  }
+  df_dominance_ppd
+}
+
+create_dominance_df_long <- function(icer_table_plot) {
 
   df_dominance_ppd <- list()
   i <- 1

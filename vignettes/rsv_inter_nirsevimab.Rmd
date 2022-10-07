@@ -59,6 +59,7 @@ Three examples of how to implement your own custom calendars are given below.
 source(here("R", "calc_outcomes.R")) # Uploads emmake_RunInterventionspty function
 source(here("R", "vac_cal.R")) # Uploads emmake_RunInterventionspty function
 source(here("R", "run_scripts.R")) # Uploads make_RunInterventions function
+
 # make_data_list() do not rerun, will create new efficacy values and will consequently have to rerun everything
 
 find_optimal_strategy <- function(trimmed_icer_table, icer_val = 20000) {
@@ -171,10 +172,10 @@ run_icer_age_eff(data_list, rerun = rerun_bool)
 
 ```{r}
 
+source("R/load_outputs.R")
 
 optimal_base_uncert_long <- get_optimal_sample_long("base", 20000)
 save(optimal_base_uncert_long, file = here::here("outputs", "icer", "base_optimal_uncert_long.RData"))
-
 
 optimal_base_uncert <- get_optimal_sample("base", 20000)
 save(optimal_base_uncert, file = here::here("outputs", "icer", "base_optimal_uncert.RData"))
@@ -184,6 +185,9 @@ save(optimal_2mo_uncert, file = here::here("outputs", "icer", "optimal_2mo_uncer
 
 optimal_lower_icer_uncert <- get_optimal_sample("lower_icer", 15000)
 save(optimal_lower_icer_uncert, file = here::here("outputs", "icer", "optimal_lower_icer_uncert.RData"))
+
+optimal_d_100_uncert <- get_optimal_sample("d_100", 20000)
+save(optimal_d_100_uncert, file = here::here("outputs", "icer", "icer_table_plot_d_100.RData"))
 
 optimal_d_250_uncert <- get_optimal_sample("d_250", 20000)
 save(optimal_d_250_uncert, file = here::here("outputs", "icer", "icer_table_plot_d_250.RData"))
@@ -201,6 +205,8 @@ save(optimal_age_eff_uncert, file = here::here("outputs", "icer", "optimal_age_e
 ```
 
 ```{r}
+
+icer_table_plot_mean <- get_icer_table_template("base")
 
 add_ann_sea <- function(df, added) {
   df$cost <- df$cost + c(added, added, added, added, added, 0)
@@ -357,7 +363,7 @@ direct_df_summary_plt <- direct_df_summary %>%
 p1C <- direct_df_summary_plt %>% mutate(prop = abs(prop)) %>%
   ggplot() + 
     geom_col(aes(y = outcome, x = prop, fill = age_group_cat), position = position_dodge2()) + 
-    facet_grid(cols = vars(aversion_type), rows = vars(name)) + 
+    facet_grid(cols = vars(aversion_type), rows = vars(name), scales="free") + 
     labs(y = "Healthcare outcome", x = "Proportion of total cases averted in each age group", fill = "Age group") + theme_bw() + 
     theme(axis.text.x = element_text(angle = 90))
   
@@ -375,12 +381,36 @@ ggsave(file = here::here("outputs", "figs", "fig1.pdf"), height = 13, width = 11
 
 source("R/load_outputs.R")
 source("R/supp_figs.R")
-require(ggpattern)
 
 icer_table_plot_mean <- get_icer_table_template("base")
 
-plot_plane(icer_table_plot_mean, 30) # holds assuming price is at least £30
+#plot_plane(icer_table_plot_mean, 30) # holds assuming price is at least £30
 icer_table_plot_dom <- create_dominance_df(icer_table_plot_mean) %>% bind_rows
+icer_table_plot_dom_long <- create_dominance_df_long(icer_table_plot_mean) %>% bind_rows
+
+require(ggpattern)
+
+recode_strategy <- c(
+    "seasonal_and_catchup_nip" = "Seasonal with NIP integrated catch-up",
+    "seasonal_and_catchup" = "Seasonal with catch-up",
+    "seasonal" = "Seasonal",
+    "vhr" = "Very high risk",
+    "year_round" = "Year round",
+    "pal" = "Palivizumab programme")
+
+recode_dom_type <- c(
+    "None" = "No",
+    "Dominated" = "Yes")
+
+icer_table_plot_dom <- icer_table_plot_dom %>% mutate(
+  strategy = recode(strategy, !!!recode_strategy),
+  dom_type = recode(dom_type, !!!recode_dom_type)
+  )
+
+icer_table_plot_dom_long <- icer_table_plot_dom_long %>% mutate(
+  strategy = recode(strategy, !!!recode_strategy),
+  dom_type = recode(dom_type, !!!recode_dom_type)
+  )
 
 p1 <- icer_table_plot_dom %>% 
   ggplot() + 
@@ -391,12 +421,39 @@ p1 <- icer_table_plot_dom %>%
       pattern_colour  = '#002366',
       pattern_angle   = 45,
       size = 0.5) +
-    scale_pattern_manual(values = c("crosshatch", "none")) + 
-    scale_color_manual(values = c("black", "darkgray", "white")) + theme_minimal() + 
-    labs(x = "Ranking (cheapest to most expensive)", y = "PPD", pattern = "Dominated?", fill = "Programme") + 
-    guides(pattern = guide_legend(override.aes = list(fill = "white"), order = 2),
-     fill = guide_legend(override.aes = list(pattern = "none", order=1) ))
+    scale_pattern_manual(values = c("none", "crosshatch")) + 
+    scale_color_manual(values = c("black", "darkgray", "white")) + theme_bw() + 
+    labs(x = "Ranking (cheapest to most expensive)", y = "Purchasing price per dose", pattern = "Dominated by cheaper programme?", fill = "Programme") + 
+    guides(pattern = guide_legend(override.aes = list(fill = "#fcf3f3"), order = 2),
+     fill = guide_legend(override.aes = list(pattern = "none", order=1) )) +
+    scale_x_continuous(breaks = 1:6, expand = c(0, 0)) + 
+    scale_y_continuous(expand = c(0, 0)) +
+     theme(panel.grid = element_blank(),
+        panel.border = element_blank(), text = element_text(size = 15)) 
 ggsave(here::here("outputs", "figs", "supp_dominace_ppd.pdf"))
+
+p2 <- icer_table_plot_dom_long %>% 
+  ggplot() + 
+    geom_tile_pattern(aes(x = rank, y = ppd, fill = strategy, pattern = dom_type), 
+      pattern_spacing = 0.01, 
+      pattern_density = 0.01, 
+      pattern_fill    = 'lightblue', 
+      pattern_colour  = '#002366',
+      pattern_angle   = 45,
+      size = 0.5) +
+    scale_pattern_manual(values = c("none", "crosshatch")) + 
+    scale_color_manual(values = c("black", "darkgray", "white")) + theme_bw() + 
+    labs(x = "Ranking (cheapest to most expensive)", y = "Purchasing price per dose", pattern = "Dominated by cheaper programme?", fill = "Programme") + 
+    guides(pattern = guide_legend(override.aes = list(fill = "#fcf3f3"), order = 2),
+     fill = guide_legend(override.aes = list(pattern = "none", order=1) )) +
+    scale_x_continuous(breaks = 1:6, expand = c(0, 0)) + 
+    scale_y_continuous(expand = c(0, 0)) +
+     theme(panel.grid = element_blank(),
+        panel.border = element_blank(), text = element_text(size = 15)) 
+ggsave(here::here("outputs", "figs", "supp_dominace_ppd_long.pdf"))
+
+
+
 
 ```
 
@@ -404,11 +461,13 @@ ggsave(here::here("outputs", "figs", "supp_dominace_ppd.pdf"))
 
 ```{r}
 
+load(file = here::here("outputs", "icer", "base_optimal_uncert_long.RData")) # optimal_base_uncert_long
 load(file = here("outputs", "impact", "base", "none.RData")) # output_default_none
 load(file = here("outputs", "impact",  "base_sum.RData")) # output_season_vhr_base
 load(file = here::here("outputs", "icer", "base_optimal_uncert.RData"))
 load(file = here::here("outputs", "icer", "optimal_2mo_uncert.RData"))
 load(file = here::here("outputs", "icer", "optimal_lower_icer_uncert.RData"))
+load(file = here::here("outputs", "icer", "icer_table_plot_d_100.RData"))
 load(file = here::here("outputs", "icer", "icer_table_plot_d_250.RData"))
 load(file = here::here("outputs", "icer", "optimal_d_360_uncert.RData"))
 load(file = here::here("outputs", "icer", "optimal_low_cov_uncert.RData"))
@@ -510,22 +569,24 @@ icer_table_plot_all <- bind_rows(
   get_optimal_mode(optimal_base_uncert, "base"),
   get_optimal_mode(optimal_2mo_uncert, "2mo"),
   get_optimal_mode(optimal_lower_icer_uncert, "lower_icer"),
+  get_optimal_mode(optimal_d_100_uncert, "d_100"),
   get_optimal_mode(optimal_d_250_uncert, "d_250"),
   get_optimal_mode(optimal_d_360_uncert, "d_360"),
   get_optimal_mode(optimal_low_cov_uncert, "low_cov"),
   get_optimal_mode(optimal_age_eff_uncert, "age_eff")
 )
 
-levels <- c("Base case*", "Duration of immunity 250 days", "Duration of immunity 360 days",
-        "Age at vaccination at 2 months", "70% coverage", "ICER threshold at 15000£/QALY" , "Age-dependent effiacy")
+levels <- c("Base case*", "Duration of immunity 100 days", "Duration of immunity 250 days", "Duration of immunity 360 days",
+        "Age at vaccination at 2 months", "70% coverage", "ICER threshold at 15000£/QALY" , "Age-dependent efficacy")
 icer_table_plot_all_f1 <- icer_table_plot_all %>% mutate(analysis = case_when(   
     analysis == "base"~"Base case*",
+    analysis == "d_100"~"Duration of immunity 100 days",
     analysis == "d_250"~"Duration of immunity 250 days",
     analysis == "d_360"~"Duration of immunity 360 days",
     analysis == "2mo"~"Age at vaccination at 2 months",
     analysis == "low_cov"~"70% coverage",
     analysis == "lower_icer"~"ICER threshold at 15000£/QALY",
-    analysis == "age_eff"~"Age-dependent effiacy"
+    analysis == "age_eff"~"Age-dependent efficacy"
     )) %>% 
     mutate(analysis = factor(analysis, 
       levels = levels))
@@ -553,7 +614,10 @@ p2B <- icer_table_plot_all_f2 %>%
       breaks = scenarios,
       labels = scenarios) + 
     theme_bw() + labs(x = "Purchasing price per dose (£)", 
-      y = "Sensitivity parameter", fill = "Programme")
+      y = "Sensitivity parameter", fill = "Programme") + 
+    theme(panel.grid = element_blank(),
+        panel.border = element_blank(), text = element_text(size = 15)) +
+    scale_x_continuous(expand = c(0, 0)) +  scale_y_discrete(expand = c(0, 0))
 
 p2A / p2B + plot_layout(guides = "collect") + plot_annotation(tag_levels = "A")
 ggsave(file = here::here("outputs", "figs", "fig2.pdf"), height = 8, width = 12)
@@ -625,27 +689,35 @@ df_full_data_reg_plot <- bind_rows(df_full_data_reg_plot_A, df_full_data_reg_plo
 
 p1 <- df_full_data_reg_plot %>% 
   ggplot() + 
-    geom_ribbon(aes(x = ppd, ymin = ymin, ymax = year_round_boundary, fill = op_strat_new)) + 
-    geom_ribbon(aes(x = ppd, ymin = year_round_boundary, ymax = ymax, fill = op_strat_new)) + 
-      labs(x = "Purchasing price per dose (£)", y = "Annual cost of seasonal administration (£)", 
-      fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma) +
+    geom_ribbon(aes(x = ppd, ymin = ymin, ymax = year_round_boundary, fill = op_strat_new), alpha = 1) + 
+    geom_ribbon(aes(x = ppd, ymin = year_round_boundary, ymax = ymax, fill = op_strat_new), alpha = 1) + 
+      labs(x = "Purchasing price per dose (£)", y = "Annual cost of \nseasonal administration (£)", 
+      fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma, expand = c(0, 0)) +
       geom_rect(xmin = 5, xmax = 33, ymin = 0, ymax = 3e6, linetype = "dashed", color = "black", alpha = 0.001) + 
-      scale_fill_manual(values = c("red", "orange", "blue", "darkgreen"))
+      scale_fill_manual(values = c("red", "orange", "blue", "darkgreen")) + 
+      theme(panel.grid = element_blank(),
+        panel.border = element_blank(), text = element_text(size = 15)) +
+      scale_x_continuous(expand = c(0, 0))
+
 
 df_full_data_reg_plot_trim <- df_full_data_reg_plot %>% filter(ppd <= 33, year_round_boundary < 3e6) %>% 
   mutate(ymax = 3e6)
 
 p2 <- df_full_data_reg_plot_trim  %>% 
   ggplot() + 
-    geom_ribbon(aes(x = ppd, ymin = ymin, ymax = year_round_boundary, fill = op_strat_new)) + 
-    geom_ribbon(aes(x = ppd, ymin = year_round_boundary, ymax = ymax, fill = op_strat_new)) + 
-          geom_rect(xmin = 5, xmax = 33, ymin = 0, ymax = 3e6, linetype = "dashed", color = "black", alpha = 0.001) + 
-      labs(x = "Purchasing price per dose (£)", y = "Annual cost of seasonal administration (£)", 
-      fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma) +
-      scale_fill_manual(values = c("blue", "darkgreen")) + theme(legend.position = "none")
+    geom_ribbon(aes(x = ppd, ymin = ymin, ymax = year_round_boundary, fill = op_strat_new), alpha = 1) + 
+    geom_ribbon(aes(x = ppd, ymin = year_round_boundary, ymax = ymax, fill = op_strat_new), alpha = 1) + 
+      geom_rect(xmin = 5, xmax = 33, ymin = 0, ymax = 3e6, linetype = "dashed", color = "black", alpha = 0, size = 1) + 
+      labs(x = "Purchasing price per dose (£)", y = "Annual cost of \neasonal administration (£)", 
+      fill = "Optimum strategy") + theme_bw()  + scale_y_continuous(labels = comma, expand = c(0, 0)) +
+      scale_fill_manual(values = c("blue", "darkgreen")) + theme(legend.position = "none") + 
+        theme(panel.grid = element_blank(),
+        panel.border = element_blank(), text = element_text(size = 15)) +
+      scale_x_continuous(expand = c(0, 0))
+
 
 p1 / p2 + plot_layout(guides = "collect", heights = c(2, 1)) 
-ggsave(file = here::here("outputs", "figs", "fig3.pdf"))
+ggsave(file = here::here("outputs", "figs", "fig3.pdf"), width = 12, height = 8)
 
 ```
 
