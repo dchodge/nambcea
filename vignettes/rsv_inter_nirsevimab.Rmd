@@ -261,7 +261,7 @@ load(file = here("outputs", "impact", "base", "output_yr_base_d.RData")) # outpu
 load(file = here("outputs", "impact", "base", "output_season_catchup_base_d.RData")) # output_season_catchup_base_d
 load(file = here("outputs", "impact", "base", "output_season_catchup_nip_base_d.RData")) # output_season_catchup_nip_base_d
 
-names_prog <- c("VHR", "S",  "YR", "S-CU", "S-CU-PID")
+names_prog <- c("VHR", "S",  "YR", "S-CU", "S-CU-NIP")
 
 full_inter_outcomes <- bind_rows(
   get_change(output_default_none, output_season_vhr_base, names_prog[1]),
@@ -730,7 +730,7 @@ ggsave(file = here::here("outputs", "figs", "fig3.pdf"), width = 12, height = 8)
 
 # 10.1% (95% CrI 7.5–12.5), 10.7% (95% CrI 7.9–13.2), and 10.5% (95% CrI 7.8–13.0) of 
 
-full_inter_outcomes %>% filter(outcome == "Hospital cases", type %in% c("YR", "S-CU", "S-CU-PID")) %>%
+full_inter_outcomes %>% filter(outcome == "Hospital cases", type %in% c("YR", "S-CU", "S-CU-NIP")) %>%
   mutate(cases_averted_abs = tot_inci_output - tot_inci_base) %>% 
   group_by(type) %>% summarise(cases_averted_abs_mean = mean(cases_averted_abs), 
     lci = quantile(cases_averted_abs, probs = 0.025), 
@@ -750,7 +750,7 @@ full_inter_outcomes_doses %>% filter(outcome %in% c("Symptomatic cases", "Hospit
     lci = quantile(capd, probs = 0.025), 
     uci = quantile(capd, probs = 0.975))
 
-full_inter_outcomes_doses %>% filter(outcome == "Hospital cases", type %in% c("YR", "S-CU", "S-CU-PID")) %>% group_by(type) %>%
+full_inter_outcomes_doses %>% filter(outcome == "Hospital cases", type %in% c("YR", "S-CU", "S-CU-NIP")) %>% group_by(type) %>%
   summarise(mean_inci_averted = mean(capd), 
     lci = quantile(capd, probs = 0.025), 
     uci = quantile(capd, probs = 0.975))
@@ -818,8 +818,8 @@ get_df_wtp <- function(output, string_name) {
 
 df_wtp_s <- get_df_wtp(output_season_base, "Season")
 df_wtp_s_cu <- get_df_wtp(output_season_catchup_base, "Season catch-up")
-df_wtp_s_cu_pid <- get_df_wtp(output_season_catchup_nip_base, "Season catch-up PID")
-df_wtp <- bind_rows(bind_rows(df_wtp_s, df_wtp_s_cu), df_wtp_s_cu_pid)
+df_wtp_s_cu_nip <- get_df_wtp(output_season_catchup_nip_base, "Season catch-up NIP")
+df_wtp <- bind_rows(bind_rows(df_wtp_s, df_wtp_s_cu), df_wtp_s_cu_nip)
 df_wtp_summ <- df_wtp %>% pivot_longer(c(wtp_nd, wtp_ce), names_to = "type", values_to = "cost") %>% 
   group_by(ppd, programme, type) %>% summarise(cost_mean = mean(cost))
 
