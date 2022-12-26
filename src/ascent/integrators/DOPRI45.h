@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include "ascent/Utility.h"
+#include "Utility.h"
 
 // Runge Kutta Dormand Prince 45
 

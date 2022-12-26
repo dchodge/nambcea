@@ -14,8 +14,8 @@
 
 #pragma once
 
-#include "ascent/Utility.h"
-#include "ascent/integrators/RK2.h"
+#include "Utility.h"
+#include "integrators/RK2.h"
 
 // P-2/PC-3/C-3 algorithm, which has the same error coefficient and order as the P-3/PC-3/C-3 predictor-corrector, but is more stable
 

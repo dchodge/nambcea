@@ -26,6 +26,10 @@ library(here)
 library(patchwork)
 library(triangle)
 
+# Load package locally
+devtools::load_all()
+library(nmabcea)
+
 ```
 
 

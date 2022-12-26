@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include "ascent/Utility.h"
+#include "Utility.h"
 
 // Five pass Runge Kutta Merson's Method. With adaptive time stepping.
 

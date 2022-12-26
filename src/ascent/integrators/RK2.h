@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include "ascent/Utility.h"
+#include "Utility.h"
 
 // Second order, two pass Runge Kutta.
 
