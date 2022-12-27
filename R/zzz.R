@@ -1,4 +1,4 @@
 #' @useDynLib nmabcea
-#' @import Rcpp 
+#' @import Rcpp
 #' @import RcppEigen
 NULL
